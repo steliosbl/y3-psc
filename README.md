@@ -1,6 +1,6 @@
-Name: [insert here]
+Name: Stelios Boulitsakis Logothetis
 
-CIS ID: [insert here]
+CIS ID: kqcr86
 
 # Coursework: PSCI
 ## Overview
