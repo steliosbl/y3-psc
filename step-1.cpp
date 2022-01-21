@@ -174,50 +174,63 @@ public:
     }
   }
 
+  inline double get_distance(int i, int j) {
+    return sqrt(
+        (x[j][0] - x[i][0]) * (x[j][0] - x[i][0]) +
+        (x[j][1] - x[i][1]) * (x[j][1] - x[i][1]) +
+        (x[j][2] - x[i][2]) * (x[j][2] - x[i][2])
+    );
+  }
+
   /**
    * This is where the force is calculated
    * Currently: gravity, ie (x_i-x_j) * m_i * m_j/r^3
    **/
-  double force_calculation(int i, int j, int direction)
-  {
-    // Euclidean distance
-    const double distance = sqrt(
-        (x[j][0] - x[i][0]) * (x[j][0] - x[i][0]) +
-        (x[j][1] - x[i][1]) * (x[j][1] - x[i][1]) +
-        (x[j][2] - x[i][2]) * (x[j][2] - x[i][2]));
-    const double distance3 = distance * distance * distance;
-    minDx = std::min(minDx, distance);
-
+  inline double force_calculation(int i, int j, int direction, double distance3) {
     return (x[i][direction] - x[j][direction]) * mass[i] * mass[j] / distance3;
+  } 
+
+  inline bool collision_detection(int i, int j)
+  {
+    return get_distance(i, j) <= 0.01 * (mass[i] + mass[j]);
   }
 
-  bool collision_detection(int i, int j)
+  void join_particles(int i, int* collisions, int n_collisions)
   {
-    const double distance = sqrt(
-        (x[j][0] - x[i][0]) * (x[j][0] - x[i][0]) +
-        (x[j][1] - x[i][1]) * (x[j][1] - x[i][1]) +
-        (x[j][2] - x[i][2]) * (x[j][2] - x[i][2]));
-
-    return distance <= 0.01 * (mass[i] + mass[j]);
-  }
-
-  void join_particles(int i, int j)
-  {
+    // We will accumulate the numerator of the mass-weighted mean in x[i] and v[i]
+    // So we start by multiplying the first element with the initial mass
     for (int d = 0; d < 3; d++)
     {
-      // Weighted mean of original 2 particles' position and velocity
-      // Put into cells of body i
-      x[i][d] = (x[i][d] * mass[i] + x[j][d] * mass[j]) / (mass[i] + mass[j]);
-      v[i][d] = (v[i][d] * mass[i] + v[j][d] * mass[j]) / (mass[i] + mass[j]);
-
-      // Replace body j with the last element of X and V arrays
-      x[j][d] = x[NumberOfBodies - 1][d];
-      v[j][d] = v[NumberOfBodies - 1][d];
+      x[i][d] *= mass[i];
+      v[i][d] *= mass[i];
     }
-    mass[i] += mass[j];
 
-    // Reduce NumberOfBodies so duplicated last element drops off
-    NumberOfBodies -= 1;
+    // Iterate the bodies to join with this one in reverse order
+    // We know that they will be in increasing order of index
+    for (int c = 0; c < n_collisions; c++) {
+      int j = collisions[n_collisions - c - 1];
+
+      for (int d = 0; d < 3; d++)
+      {
+        // Accumulate numerator
+        x[i][d] += x[j][d] * mass[j];
+        v[i][d] += v[j][d] * mass[j];
+
+        // Replace body j with the last element
+        x[j][d] = x[NumberOfBodies - c - 1][d];
+        v[j][d] = v[NumberOfBodies - c - 1][d];
+      }
+
+      // Accumulate combined mass (the denominator of the mass-weighted mean)
+      mass[i] += mass[j];
+    }
+
+    // Now divide by the denominator
+    for (int d = 0; d < 3; d++)
+    {
+      x[i][d] /= mass[i];
+      v[i][d] /= mass[i];
+    }
   }
 
   /**
@@ -225,49 +238,65 @@ public:
    */
   void updateBody()
   {
-
     timeStepCounter++;
     maxV = 0.0;
     minDx = std::numeric_limits<double>::max();
 
-    // force0 = force along x direction
-    // force1 = force along y direction
-    // force2 = force along z direction
-    double *force0 = new double[NumberOfBodies];
-    double *force1 = new double[NumberOfBodies];
-    double *force2 = new double[NumberOfBodies];
+    double *force0 = new double[NumberOfBodies];   // force along x direction
+    double *force1 = new double[NumberOfBodies];  // force along y direction
+    double *force2 = new double[NumberOfBodies]; // force along z direction
+    int *collisions = new int[NumberOfBodies];  // buffer of all other particles (indexes) each particle is to be joined with
+    int n_collisions = 0;                      // counter of the above
 
+    // Step 0
+    // Fill force buffers with zeros
     std::fill_n(force0, NumberOfBodies, 0.0);
     std::fill_n(force1, NumberOfBodies, 0.0);
     std::fill_n(force2, NumberOfBodies, 0.0);
 
+    // Step 1
+    // Detect collisions and fuse bodies
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      int collided_with = 0;
+      n_collisions = 0;
       for (int j = i + 1; j < NumberOfBodies; j++)
       {
         if (collision_detection(i, j))
         {
-          join_particles(i, j-collided_with);
-          // Decrease J because we have just moved a new particle into this index
-          // Which still needs to be checked
-          collided_with += 1;
+          collisions[n_collisions] = j;
+          n_collisions += 1;
         }
-        else
-        {
-          double t = force_calculation(j, i, 0);
-          force0[i] += t;
-          force0[j] -= t;
-          t = force_calculation(j, i, 1);
-          force1[i] += t;
-          force1[j] -= t;
-          t = force_calculation(j, i, 2);
-          force2[i] += t;
-          force2[j] -= t;
-        }
+      }
+
+      join_particles(i, collisions, n_collisions);
+      NumberOfBodies -= n_collisions;
+    }
+
+    // Step 2
+    // For all remaining bodies, calculate forces
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      for (int j = i + 1; j < NumberOfBodies; j++)
+      {
+        double distance = get_distance(i, j);
+        minDx = std::min(minDx, distance);
+
+        double distance3 = distance * distance * distance;
+
+        double t = force_calculation(j, i, 0, distance3);
+        force0[i] += t;
+        force0[j] -= t;
+        t = force_calculation(j, i, 1, distance3);
+        force1[i] += t;
+        force1[j] -= t;
+        t = force_calculation(j, i, 2, distance3);
+        force2[i] += t;
+        force2[j] -= t;
       }
     }
 
+    // Step 3
+    // Compute velocities and positions
     for (int i = 0; i < NumberOfBodies; i++)
     {
       x[i][0] = x[i][0] + timeStepSize * v[i][0];
@@ -288,6 +317,7 @@ public:
     delete[] force0;
     delete[] force1;
     delete[] force2;
+    delete[] collisions;
   }
 
   /**

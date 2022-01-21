@@ -2,6 +2,7 @@ import sys
 from random import random
 import math
 import argparse
+import json
 
 def create_grid_setup(N_x,N_y,N_z, min_mass, max_mass, scenario, snapshots,final_time, dt):
   particle_string  = str(snapshots)
@@ -74,6 +75,13 @@ if __name__ =="__main__":
   script_name = args.executable + ".sh"
   dumpFile = open( script_name, "w" )
   dumpFile.write( args.executable + " " + particle_string )
+
+  with open('.vscode/launch.json', 'r') as file:
+    o = json.load(file)
+  
+  o['configurations'][0]['args'] = particle_string.split(' ')
+  with open('.vscode/launch.json', 'w') as file:
+    json.dump(o, file)
 
   print( "Wrote a script file to current directly which you can launch directly via " + script_name + " on a Linux terminal" )
   print( "You might have to give it executable rights first via chmod u+x " + script_name )
