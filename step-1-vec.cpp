@@ -142,9 +142,10 @@ class NBodySimulation
   int *collisions;      // Collisions to track
   double *mass;         // Masses of particles
   double timeStepSize;  // Global time step size
-  double timeStepSize2; // Half delta-t (avoid re-computing over and over)
+  double timeStepSizeInitial;  // Global time step size
   double maxV;          // Maximum velocity of all particles
   double minDx;         // Minimum distance between two elements
+  double min_mass;
 
   /**
    * Stream for video output file.
@@ -163,7 +164,7 @@ public:
    */
   NBodySimulation() : t(0), tFinal(0), tPlot(0), tPlotDelta(0), NumberOfBodies(0),
                       x(nullptr), v(nullptr), f(nullptr), mass(nullptr), collisions(nullptr),
-                      timeStepSize(0), timeStepSize2(0), maxV(0), minDx(0), videoFile(),
+                      timeStepSize(0), timeStepSizeInitial(0), maxV(0), minDx(0), videoFile(),
                       snapshotCounter(0), timeStepCounter(0){};
 
   /**
@@ -222,6 +223,7 @@ public:
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
+    min_mass = std::numeric_limits<double>::max();
 
     int readArgument = 1;
 
@@ -229,8 +231,7 @@ public:
     readArgument++;
     tFinal = std::stof(argv[readArgument]);
     readArgument++;
-    timeStepSize = std::stof(argv[readArgument]);
-    timeStepSize2 = timeStepSize / 2;
+    timeStepSizeInitial = timeStepSize = std::stof(argv[readArgument]);
     readArgument++;
 
     for (int i = 0; i < NumberOfBodies; i++)
@@ -242,6 +243,7 @@ public:
       readArgument += 3;
 
       mass[i] = std::stof(argv[readArgument]);
+      min_mass = std::min(min_mass, mass[i]);
       readArgument++;
 
       if (mass[i] <= 0.0)
@@ -355,7 +357,7 @@ public:
     {
       // Step 1
       // Compute half the next Euler time-step for velocity
-      v[i] += f[i] * timeStepSize2;
+      v[i] += f[i] * (timeStepSize / 2);
 
       // Step 2
       // Update positions
@@ -377,7 +379,7 @@ public:
     // Update the velocities by full time step
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      v[i] += f[i] * timeStepSize2;
+      v[i] += f[i] * (timeStepSize / 2);
       maxV = std::max(magnitude(v[i]), maxV);
     }
 

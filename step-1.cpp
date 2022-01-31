@@ -267,6 +267,30 @@ public:
     int *collisions = new int[NumberOfBodies]; // buffer of all other particles (indexes) each particle is to be joined with
     int n_collisions = 0;                      // counter of the above
 
+
+    // Step 2
+    // Computer half the next Euler time-step for velocity
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      v[i][0] += timeStepSize / 2 * force0[i];
+      v[i][1] += timeStepSize / 2 * force1[i];
+      v[i][2] += timeStepSize / 2 * force2[i];
+    }
+
+    // Step 3
+    // Update positions
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      x[i][0] += timeStepSize * v[i][0];
+      x[i][1] += timeStepSize * v[i][1];
+      x[i][2] += timeStepSize * v[i][2];
+    }
+
+    
+    std::fill_n(force0, NumberOfBodies, 0.0);
+    std::fill_n(force1, NumberOfBodies, 0.0);
+    std::fill_n(force2, NumberOfBodies, 0.0);
+
     // Step 1
     // Detect collisions and fuse bodies
     for (int i = 0; i < NumberOfBodies; i++)
@@ -283,19 +307,6 @@ public:
 
       join_particles(i, collisions, n_collisions);
       NumberOfBodies -= n_collisions;
-    }
-
-    std::fill_n(force0, NumberOfBodies, 0.0);
-    std::fill_n(force1, NumberOfBodies, 0.0);
-    std::fill_n(force2, NumberOfBodies, 0.0);
-
-    // Step 3
-    // Update positions
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      x[i][0] += timeStepSize * v[i][0];
-      x[i][1] += timeStepSize * v[i][1];
-      x[i][2] += timeStepSize * v[i][2];
     }
 
     // Step 3
@@ -334,14 +345,6 @@ public:
           maxV);
     }
 
-    // Step 2
-    // Computer half the next Euler time-step for velocity
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      v[i][0] += timeStepSize / 2 * force0[i];
-      v[i][1] += timeStepSize / 2 * force1[i];
-      v[i][2] += timeStepSize / 2 * force2[i];
-    }
 
     t += timeStepSize;
 
