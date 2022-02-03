@@ -20,7 +20,7 @@
 // "Point Gaussian". Pressing play will play your time steps.
 
 // Constants
-#define RCUT 2.0
+#define RCUT 2.5
 #define DOMAIN 10.0
 #define ALPHA 1.0
 
@@ -206,7 +206,7 @@ class NBodySimulation
   double timeStepSizeInitial; // Global time step size
   double maxV;                // Maximum velocity of all particles
   double minDx;               // Minimum distance between two elements
-  double max_mass;
+  vec3 momentum;
 
   /**
    * Stream for video output file.
@@ -273,13 +273,6 @@ public:
           if (distance < ALPHA * ALPHA)
           {
             results[n_results] = scalar_cell_index(x, y, z);
-            // results[n_results+1] = scalar_cell_index(x, -y, z);
-            // results[n_results+2] = scalar_cell_index(-x, -y, z);
-            // results[n_results+3] = scalar_cell_index(-x, y, z);
-            // results[n_results+4] = scalar_cell_index(x, y, -z);
-            // results[n_results+5] = scalar_cell_index(x, -y, -z);
-            // results[n_results+6] = scalar_cell_index(-x, -y, -z);
-            // results[n_results+7] = scalar_cell_index(-x, y, -z);
             n_results++;
           }
         }
@@ -291,9 +284,6 @@ public:
       results[n_results] = scalar_cell_index(0, 0, i);
       results[n_results + 1] = scalar_cell_index(0, i, 0);
       results[n_results + 2] = scalar_cell_index(i, 0, 0);
-      // results[n_results+3] = scalar_cell_index(0,0,-i);
-      // results[n_results+4] = scalar_cell_index(0,-i,0);
-      // results[n_results+5] = scalar_cell_index(-i,0,0);
       n_results += 3;
     }
 
@@ -317,19 +307,19 @@ public:
     }
   }
 
-  inline int scalar_cell_index(vec3 i)
-  {
-    return i.x + i.y * NC + i.z * NC * NC;
-  }
-
   inline int scalar_cell_index(int x, int y, int z)
   {
     return x + NC * y + NC * NC * z;
   }
 
+  inline int scalar_cell_index(vec3 i)
+  {
+    return scalar_cell_index(i.x, i.y, i.z);
+  }
+
   inline int scalar_cell_index(Particle *i)
   {
-    return scalar_cell_index(i->x.x / CELL_SIDE_LEN, i->x.y / CELL_SIDE_LEN, i->x.z / CELL_SIDE_LEN);
+    return scalar_cell_index((i->x + DOMAIN / 2) / CELL_SIDE_LEN);
   }
 
   void sort_particles()
@@ -492,9 +482,9 @@ public:
             // d^6 = d^2^3
             double d6 = 1 / (d2 * d2 * d2);
             // LJ = (d^12-d^6)/d = d^6 * d *(d^6 -1)
-            double lj = d6 * (d6 - 1);
+            double lj = d6 * d6 - d6;
 
-            vec3 force = lj * distance_vec / d2;
+            vec3 force = lj * distance_vec;
 
             i->f += force;
             j->f -= force;
@@ -538,6 +528,7 @@ public:
     timeStepCounter++;
     maxV = 0.0;
     minDx = std::numeric_limits<double>::max();
+    momentum = vec3(0.0);
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
@@ -561,10 +552,12 @@ public:
     for (int i = 0; i < NumberOfBodies; i++)
     {
       Particle *p = &particles[i];
+      p->f *= mass[i];
       // Step 1
       // Compute half the next Euler time-step for velocity
       p->v += p->f * (timeStepSize / 2);
       maxV = std::max(magnitude_squared(p->v), maxV);
+      momentum += p->v * mass[i];
     }
 
     maxV = std::sqrt(maxV);
@@ -662,6 +655,7 @@ public:
               << ",\t dt=" << timeStepSize
               << ",\t v_max=" << maxV
               << ",\t dx_min=" << minDx
+              << ",\t momentum=" << magnitude(momentum)
               << std::endl;
   }
 
