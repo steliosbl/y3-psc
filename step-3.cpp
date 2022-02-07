@@ -208,7 +208,7 @@ public:
     return a * a + b * b + c * c;
   }
 
-  void join_particles(int i, int n_collisions)
+  inline void join_particles(int i, int n_collisions)
   {
     // Accumulate total mass
     double mass_new = mass[i];
@@ -273,54 +273,53 @@ public:
     vz[i] = v_new_z * mass_new;
   }
 
-  void collision_detection()
+#pragma omp declare simd linear(i)
+  inline void collision_detection(int i)
   {
-    // Iterate upper triangle of all particles
-    for (int i = 0; i < NumberOfBodies; i++)
+    // We will detect all collisions with this particle
+    int n_collisions = 0; // And count them here
+    for (int j = i + 1; j < NumberOfBodies; j++)
     {
-      // We will detect all collisions with this particle
-      int n_collisions = 0; // And count them here
-      for (int j = i + 1; j < NumberOfBodies; j++)
+      double mass_sum = (mass[i] + mass[j]);
+      std::cout << mass_sum;
+      if (distance_squared(i, j) <= C2 * mass_sum * mass_sum)
       {
-        double mass_sum = (mass[i] + mass[j]);
-        if (distance_squared(i, j) <= C2 * mass_sum * mass_sum)
-        {
-          collisions[n_collisions] = j;
-          n_collisions += 1;
-        }
+        collisions[n_collisions] = j;
+        n_collisions += 1;
       }
-
-      // Run a second loop to join all particles with this one
-      join_particles(i, n_collisions);
-      NumberOfBodies -= n_collisions;
-
-      // Re-calc the forces for the resulting particle
-      fx[i] = 0.0;
-      fy[i] = 0.0;
-      fz[i] = 0.0;
-      force_update_single(i);
     }
+
+    // Run a second loop to join all particles with this one
+    join_particles(i, n_collisions);
+    NumberOfBodies -= n_collisions;
+
+    // Re-calc the forces for the resulting particle
+    fx[i] = 0.0;
+    fy[i] = 0.0;
+    fz[i] = 0.0;
+    // force_update_single(i);
   }
 
+#pragma omp declare simd linear(i)
   inline void force_update_single(int i)
   {
     double f_new_x = fx[i];
     double f_new_y = fy[i];
     double f_new_z = fz[i];
     double f_x, f_y, f_z;
+    double dx, dy, dz;
 
 #pragma omp simd reduction(+ \
                            : f_new_x, f_new_y, f_new_z)
     for (int j = i + 1; j < NumberOfBodies; j++)
     {
       // Compute distance and track max
-      double dx = xx[j] - xx[i];
-      double dy = xy[j] - xy[i];
-      double dz = xz[j] - xz[i];
+      dx = xx[j] - xx[i];
+      dy = xy[j] - xy[i];
+      dz = xz[j] - xz[i];
 
       double distance2 = magnitude_squared(dx, dy, dz);
       double denom = 1 / (distance2 * std::sqrt(distance2));
-      minDx = std::min(minDx, distance2);
 
       // Compute new acceleration.
       // Normally we would divide by m to get acceleration
@@ -343,15 +342,6 @@ public:
     fx[i] = f_new_x;
     fy[i] = f_new_y;
     fz[i] = f_new_z;
-  }
-
-  inline void force_update()
-  {
-    // Iterate upper triangle of all particles
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      force_update_single(i);
-    }
   }
 
   /**
@@ -383,9 +373,14 @@ public:
     // Zero out old forces
     zero_forces();
 
-    // Step 4
-    // Calculate new forces from the new positions
-    force_update();
+// Step 4
+// Calculate new forces from the new positions
+// Iterate upper triangle of all particles
+#pragma omp simd
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      force_update_single(i);
+    }
 
 // Step 5
 // Update the velocities by full time step
@@ -404,10 +399,13 @@ public:
     // So if the smallest distance between any two particles is leq this, we should check
     if (minDx <= C2 * max_mass * max_mass * 4)
     {
-      collision_detection();
+      // Iterate upper triangle of all particles
+      for (int i = 0; i < NumberOfBodies; i++)
+      {
+        collision_detection(i);
+      }
     }
 
-    maxV = std::sqrt(*std::max_element(vt, vt + NumberOfBodies));
     minDx = std::sqrt(minDx);
 
     t += timeStepSize;
@@ -496,6 +494,7 @@ public:
    */
   void printSnapshotSummary()
   {
+    maxV = std::sqrt(*std::max_element(vt, vt + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t
