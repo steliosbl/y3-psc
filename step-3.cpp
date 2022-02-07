@@ -19,120 +19,6 @@
 // need to look a the properties of result.pvd and select the representation
 // "Point Gaussian". Pressing play will play your time steps.
 
-struct vec3
-{
-  double x, y, z;
-  vec3()
-  {
-  }
-
-  vec3(double x, double y, double z)
-  {
-    this->x = x;
-    this->y = y;
-    this->z = z;
-  }
-
-  inline vec3 &operator+=(const vec3 &b)
-  {
-    this->x += b.x;
-    this->y += b.y;
-    this->z += b.z;
-    return *this;
-  }
-
-  inline vec3 &operator-=(const vec3 &b)
-  {
-    this->x -= b.x;
-    this->y -= b.y;
-    this->z -= b.z;
-    return *this;
-  }
-
-  inline vec3 &operator*=(const vec3 &b)
-  {
-    this->x *= b.x;
-    this->y *= b.y;
-    this->z *= b.z;
-    return *this;
-  }
-
-  inline vec3 &operator/=(const vec3 &b)
-  {
-    this->x /= b.x;
-    this->y /= b.y;
-    this->z /= b.z;
-    return *this;
-  }
-
-  inline vec3 &operator*=(const double &b)
-  {
-    this->x *= b;
-    this->y *= b;
-    this->z *= b;
-    return *this;
-  }
-
-  inline vec3 &operator/=(const double &b)
-  {
-    this->x /= b;
-    this->y /= b;
-    this->z /= b;
-    return *this;
-  }
-};
-
-inline vec3 operator+(vec3 a, const vec3 &b)
-{
-  a += b;
-  return a;
-}
-
-inline vec3 operator-(vec3 a, const vec3 &b)
-{
-  a -= b;
-  return a;
-}
-
-inline vec3 operator*(vec3 a, const vec3 &b)
-{
-  a *= b;
-  return a;
-}
-
-inline vec3 operator/(vec3 a, const vec3 &b)
-{
-  a /= b;
-  return a;
-}
-
-inline vec3 operator*(vec3 a, const double &b)
-{
-  a *= b;
-  return a;
-}
-
-inline vec3 operator/(vec3 a, const double &b)
-{
-  a /= b;
-  return a;
-}
-
-inline double magnitude(const vec3 &a)
-{
-  return sqrt(
-      a.x * a.x +
-      a.y * a.y +
-      a.z * a.z);
-}
-
-inline double magnitude_squared(const vec3 &a)
-{
-  return a.x * a.x +
-         a.y * a.y +
-         a.z * a.z;
-}
-
 class NBodySimulation
 {
 
@@ -141,17 +27,31 @@ class NBodySimulation
   double tPlot;
   double tPlotDelta;
 
-  int NumberOfBodies;         // Total number of particles (*at a given time*)
-  double C;                   // Collision detection constant
-  vec3 *x;                    // Position components
-  vec3 *v;                    // Velocity components
-  vec3 *f;                    // Force components
-  int *collisions;            // Collisions to track
-  double *mass;               // Masses of particles
-  double timeStepSize;        // Global time step size
-  double timeStepSizeInitial; // Global time step size
-  double maxV;                // Maximum velocity of all particles
-  double minDx;               // Minimum distance between two elements
+  int NumberOfBodies; // Total number of particles (*at a given time*)
+  double C2;          // Collision detection constant (squared)
+
+  // Position components
+  double *xx;
+  double *xy;
+  double *xz;
+
+  // Velocity components
+  double *vx;
+  double *vy;
+  double *vz;
+
+  // Force components
+  double *fx;
+  double *fy;
+  double *fz;
+
+  double *vt;
+  int *collisions;         // Collisions to track
+  double *mass;            // Masses of particles
+  double timeStepSize;     // Global time step size
+  double timeStepSizeHalf; // Global time step size halved
+  double maxV;             // Maximum velocity of all particles
+  double minDx;            // Minimum distance between two elements
   double max_mass;
 
   /**
@@ -169,9 +69,14 @@ public:
   /**
    * Constructor.
    */
-  NBodySimulation() : t(0), tFinal(0), tPlot(0), tPlotDelta(0), NumberOfBodies(0), max_mass(1.0),
-                      x(nullptr), v(nullptr), f(nullptr), mass(nullptr), collisions(nullptr),
-                      timeStepSize(0), timeStepSizeInitial(0), maxV(0), minDx(0), videoFile(),
+  NBodySimulation() : t(0), tFinal(0), tPlot(0), tPlotDelta(0),
+                      NumberOfBodies(0), max_mass(1.0),
+                      xx(nullptr), xy(nullptr), xz(nullptr),
+                      vx(nullptr), vy(nullptr), vz(nullptr),
+                      fx(nullptr), fy(nullptr), fz(nullptr),
+                      vt(nullptr), mass(nullptr), collisions(nullptr),
+                      timeStepSize(0), timeStepSizeHalf(0),
+                      maxV(0), minDx(0), videoFile(),
                       snapshotCounter(0), timeStepCounter(0){};
 
   /**
@@ -179,34 +84,37 @@ public:
    */
   ~NBodySimulation()
   {
-    if (x != nullptr)
-    {
-      delete[] x;
-    }
-    if (v != nullptr)
-    {
-      delete[] v;
-    }
-    if (f != nullptr)
-    {
-      delete[] f;
-    }
+    if (xx != nullptr)
+      delete[] xx;
+    if (xy != nullptr)
+      delete[] xy;
+    if (xz != nullptr)
+      delete[] xz;
+    if (vx != nullptr)
+      delete[] vx;
+    if (vy != nullptr)
+      delete[] vy;
+    if (vz != nullptr)
+      delete[] vz;
+    if (vt != nullptr)
+      delete[] vt;
+    if (fx != nullptr)
+      delete[] fx;
+    if (fy != nullptr)
+      delete[] fy;
+    if (fz != nullptr)
+      delete[] fz;
     if (mass != nullptr)
-    {
       delete[] mass;
-    }
     if (collisions != nullptr)
-    {
       delete[] collisions;
-    }
   }
 
   inline void zero_forces()
   {
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      f[i] = {0.0, 0.0, 0.0};
-    }
+    std::fill(fx, fx + NumberOfBodies, 0);
+    std::fill(fy, fy + NumberOfBodies, 0);
+    std::fill(fz, fz + NumberOfBodies, 0);
   }
 
   /**
@@ -222,11 +130,19 @@ public:
   void setUp(int argc, char **argv)
   {
     NumberOfBodies = (argc - 4) / 7;
-    C = 0.01 / NumberOfBodies;
+    C2 = 1.0 / (NumberOfBodies * NumberOfBodies * 10000);
+    max_mass = 0.0;
 
-    x = new vec3[NumberOfBodies];
-    v = new vec3[NumberOfBodies];
-    f = new vec3[NumberOfBodies];
+    xx = new double[NumberOfBodies];
+    xy = new double[NumberOfBodies];
+    xz = new double[NumberOfBodies];
+    vx = new double[NumberOfBodies];
+    vy = new double[NumberOfBodies];
+    vz = new double[NumberOfBodies];
+    vt = new double[NumberOfBodies];
+    fx = new double[NumberOfBodies];
+    fy = new double[NumberOfBodies];
+    fz = new double[NumberOfBodies];
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
@@ -237,18 +153,24 @@ public:
     readArgument++;
     tFinal = std::stof(argv[readArgument]);
     readArgument++;
-    timeStepSizeInitial = timeStepSize = std::stof(argv[readArgument]);
+    timeStepSize = std::stof(argv[readArgument]);
+    timeStepSizeHalf = timeStepSize / 2;
     readArgument++;
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      x[i] = vec3(std::stof(argv[readArgument]), std::stof(argv[readArgument + 1]), std::stof(argv[readArgument + 2]));
+      xx[i] = std::stof(argv[readArgument]);
+      xy[i] = std::stof(argv[readArgument + 1]);
+      xz[i] = std::stof(argv[readArgument + 2]);
       readArgument += 3;
 
-      v[i] = vec3(std::stof(argv[readArgument]), std::stof(argv[readArgument + 1]), std::stof(argv[readArgument + 2]));
+      vx[i] = std::stof(argv[readArgument]);
+      vy[i] = std::stof(argv[readArgument + 1]);
+      vz[i] = std::stof(argv[readArgument + 2]);
       readArgument += 3;
 
       mass[i] = std::stof(argv[readArgument]);
+      max_mass = std::max(max_mass, mass[i]);
       readArgument++;
 
       if (mass[i] <= 0.0)
@@ -274,21 +196,48 @@ public:
     }
   }
 
+  inline double distance_squared(int i, int j)
+  {
+    return (xx[i] - xx[j]) * (xx[i] - xx[j]) +
+           (xy[i] - xy[j]) * (xy[i] - xy[j]) +
+           (xz[i] - xz[j]) * (xz[i] - xz[j]);
+  }
+
+  inline double magnitude_squared(double a, double b, double c)
+  {
+    return a * a + b * b + c * c;
+  }
+
   void join_particles(int i, int n_collisions)
   {
-    vec3 x_new = x[i] * mass[i]; // Accumulate the numerator of the mass-weighed mean of position
-    vec3 v_new = v[i] * mass[i]; // Same for velocity
-    double mass_new = mass[i];   // Accumulate total mass
+    // Accumulate total mass
+    double mass_new = mass[i];
+
+    // Accumulate the numerator of the mass-weighed mean of position
+    double x_new_x = xx[i] * mass_new;
+    double x_new_y = xy[i] * mass_new;
+    double x_new_z = xz[i] * mass_new;
+
+    // Same for velocity
+    double v_new_x = vx[i] * mass_new;
+    double v_new_y = vy[i] * mass_new;
+    double v_new_z = vz[i] * mass_new;
 
     // Iterate the bodies to join with this one in reverse order
     // We know that they will be in increasing order of index
+#pragma omp simd reduction(+ \
+                           : x_new_x, x_new_y, x_new_z, v_new_x, v_new_y, v_new_z, mass_new)
     for (int c = 0; c < n_collisions; c++)
     {
       int j = collisions[n_collisions - c - 1];
 
       // Accumulate numerator
-      x_new += x[j] * mass[j];
-      v_new += v[j] * mass[j];
+      x_new_x += xx[j] * mass[j];
+      x_new_y += xy[j] * mass[j];
+      x_new_z += xz[j] * mass[j];
+      v_new_x += vx[j] * mass[j];
+      v_new_y += vy[j] * mass[j];
+      v_new_z += vz[j] * mass[j];
 
       // Accumulate combined mass (the denominator of the mass-weighted mean)
       mass_new += mass[j];
@@ -298,18 +247,30 @@ public:
       int old_idx = NumberOfBodies - c - 1;
       if (old_idx != i)
       {
-        x[j] = x[old_idx];
-        v[j] = v[old_idx];
-        f[j] = f[old_idx];
+        xx[j] = xx[old_idx];
+        xy[j] = xy[old_idx];
+        xz[j] = xz[old_idx];
+        vx[j] = vx[old_idx];
+        vy[j] = vy[old_idx];
+        vz[j] = vz[old_idx];
+        fx[j] = fx[old_idx];
+        fy[j] = fy[old_idx];
+        fz[j] = fz[old_idx];
         mass[j] = mass[old_idx];
       }
     }
 
     // Now divide by the denominator and assign
-    x[i] = x_new / mass_new;
-    v[i] = v_new / mass_new;
     mass[i] = mass_new;
     max_mass = std::max(max_mass, mass_new);
+
+    mass_new = 1.0 / mass_new;
+    xx[i] = x_new_x * mass_new;
+    xy[i] = x_new_y * mass_new;
+    xz[i] = x_new_z * mass_new;
+    vx[i] = v_new_x * mass_new;
+    vy[i] = v_new_y * mass_new;
+    vz[i] = v_new_z * mass_new;
   }
 
   void collision_detection()
@@ -321,7 +282,8 @@ public:
       int n_collisions = 0; // And count them here
       for (int j = i + 1; j < NumberOfBodies; j++)
       {
-        if (magnitude(x[j] - x[i]) <= C * (mass[i] + mass[j]))
+        double mass_sum = (mass[i] + mass[j]);
+        if (distance_squared(i, j) <= C2 * mass_sum * mass_sum)
         {
           collisions[n_collisions] = j;
           n_collisions += 1;
@@ -330,30 +292,57 @@ public:
 
       // Run a second loop to join all particles with this one
       join_particles(i, n_collisions);
-      NumberOfBodies -= n_collisions; 
+      NumberOfBodies -= n_collisions;
 
       // Re-calc the forces for the resulting particle
-      f[i] = {0.0, 0.0, 0.0};
+      fx[i] = 0.0;
+      fy[i] = 0.0;
+      fz[i] = 0.0;
       force_update_single(i);
     }
   }
 
   inline void force_update_single(int i)
   {
+    double f_new_x = fx[i];
+    double f_new_y = fy[i];
+    double f_new_z = fz[i];
+    double f_x, f_y, f_z;
+
+#pragma omp simd reduction(+ \
+                           : f_new_x, f_new_y, f_new_z)
     for (int j = i + 1; j < NumberOfBodies; j++)
     {
       // Compute distance and track max
-      vec3 distance_vec = x[j] - x[i];
-      double distance = magnitude(distance_vec);
-      minDx = std::min(minDx, distance);
+      double dx = xx[j] - xx[i];
+      double dy = xy[j] - xy[i];
+      double dz = xz[j] - xz[i];
 
-      // Vector of new force. Normally we would divide by m to get acceleration
+      double distance2 = magnitude_squared(dx, dy, dz);
+      double denom = 1 / (distance2 * std::sqrt(distance2));
+      minDx = std::min(minDx, distance2);
+
+      // Compute new acceleration.
+      // Normally we would divide by m to get acceleration
       // Instead we skip the mass component of the force and multiply by the other one
       // That way we avoid multiplying and then dividing in the next step
-      vec3 temp = (distance_vec) / (distance * distance * distance);
-      f[i] += temp * mass[j];
-      f[j] -= temp * mass[i];
+      f_x = dx * denom;
+      f_y = dy * denom;
+      f_z = dz * denom;
+
+      f_new_x += f_x * mass[j];
+      f_new_y += f_y * mass[j];
+      f_new_z += f_z * mass[j];
+
+      fx[j] -= f_x * mass[i];
+      fy[j] -= f_y * mass[i];
+      fz[j] -= f_z * mass[i];
     }
+
+    // Assign final force (actually acceleration) value
+    fx[i] = f_new_x;
+    fy[i] = f_new_y;
+    fz[i] = f_new_z;
   }
 
   inline void force_update()
@@ -374,15 +363,20 @@ public:
     maxV = 0.0;
     minDx = std::numeric_limits<double>::max();
 
+#pragma omp simd
     for (int i = 0; i < NumberOfBodies; i++)
     {
       // Step 1
       // Compute half the next Euler time-step for velocity
-      v[i] += f[i] * (timeStepSize / 2);
+      vx[i] += fx[i] * timeStepSizeHalf;
+      vy[i] += fy[i] * timeStepSizeHalf;
+      vz[i] += fz[i] * timeStepSizeHalf;
 
       // Step 2
       // Update positions
-      x[i] += v[i] * timeStepSize;
+      xx[i] += vx[i] * timeStepSize;
+      xy[i] += vy[i] * timeStepSize;
+      xz[i] += vz[i] * timeStepSize;
     }
 
     // Step 3
@@ -393,24 +387,28 @@ public:
     // Calculate new forces from the new positions
     force_update();
 
-    // Step 5
-    // Update the velocities by full time step
+// Step 5
+// Update the velocities by full time step
+#pragma omp simd
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      v[i] += f[i] * (timeStepSize / 2);
-      maxV = std::max(magnitude_squared(v[i]), maxV);
+      vx[i] += fx[i] * timeStepSizeHalf;
+      vy[i] += fy[i] * timeStepSizeHalf;
+      vz[i] += fz[i] * timeStepSizeHalf;
+      vt[i] = magnitude_squared(vx[i], vy[i], vz[i]);
     }
 
     // Step 6
     // Collisions
     // Largest possible collision radius is 2C * the maximum mass of any current particle
     // So if the smallest distance between any two particles is leq this, we should check
-    if (minDx <= C * max_mass * 2)
+    if (minDx <= C2 * max_mass * max_mass * 4)
     {
       collision_detection();
     }
 
-    maxV = std::sqrt(maxV);
+    maxV = std::sqrt(*std::max_element(vt, vt + NumberOfBodies));
+    minDx = std::sqrt(minDx);
 
     t += timeStepSize;
   }
@@ -472,11 +470,11 @@ public:
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      out << x[i].x
+      out << xx[i]
           << " "
-          << x[i].y
+          << xy[i]
           << " "
-          << x[i].z
+          << xz[i]
           << " ";
     }
 
@@ -527,7 +525,7 @@ public:
   {
     std::cout << "Number of remaining objects: " << NumberOfBodies << std::endl;
     std::cout << "Position of first remaining object: "
-              << x[0].x << ", " << x[0].y << ", " << x[0].z << std::endl;
+              << xx[0] << ", " << xy[0] << ", " << xz[0] << std::endl;
   }
 };
 
