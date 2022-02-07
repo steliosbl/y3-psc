@@ -8,6 +8,8 @@
                 "-fdiagnostics-color=always",
                 "-g",
                 "${file}",
+                "-fopenmp",
+                "-mavx512f",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}"
             ],

@@ -6,7 +6,7 @@ all: assignment-gcc assignment-icpc
 
 # Target to be used with the GNU Compiler Collection.
 assignment-gcc: CXX=g++
-assignment-gcc: CXXFLAGS=-fopenmp -O3 -march=native -std=c++0x
+assignment-gcc: CXXFLAGS=-fopenmp -O3 -march=native -std=c++0x -fno-math-errno
 assignment-gcc: assignment-code.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $<
 

@@ -45,7 +45,8 @@ class NBodySimulation
   double *fy;
   double *fz;
 
-  double *vt;
+  double *velocities;
+  double *distances;
   int *collisions;         // Collisions to track
   double *mass;            // Masses of particles
   double timeStepSize;     // Global time step size
@@ -74,7 +75,8 @@ public:
                       xx(nullptr), xy(nullptr), xz(nullptr),
                       vx(nullptr), vy(nullptr), vz(nullptr),
                       fx(nullptr), fy(nullptr), fz(nullptr),
-                      vt(nullptr), mass(nullptr), collisions(nullptr),
+                      velocities(nullptr), distances(nullptr),
+                      mass(nullptr), collisions(nullptr),
                       timeStepSize(0), timeStepSizeHalf(0),
                       maxV(0), minDx(0), videoFile(),
                       snapshotCounter(0), timeStepCounter(0){};
@@ -96,14 +98,16 @@ public:
       delete[] vy;
     if (vz != nullptr)
       delete[] vz;
-    if (vt != nullptr)
-      delete[] vt;
     if (fx != nullptr)
       delete[] fx;
     if (fy != nullptr)
       delete[] fy;
     if (fz != nullptr)
       delete[] fz;
+    if (velocities != nullptr)
+      delete[] velocities;
+    if (distances != nullptr)
+      delete[] distances;
     if (mass != nullptr)
       delete[] mass;
     if (collisions != nullptr)
@@ -139,10 +143,11 @@ public:
     vx = new double[NumberOfBodies];
     vy = new double[NumberOfBodies];
     vz = new double[NumberOfBodies];
-    vt = new double[NumberOfBodies];
     fx = new double[NumberOfBodies];
     fy = new double[NumberOfBodies];
     fz = new double[NumberOfBodies];
+    velocities = new double[NumberOfBodies];
+    distances = new double[NumberOfBodies];
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
@@ -223,8 +228,8 @@ public:
     double v_new_y = vy[i] * mass_new;
     double v_new_z = vz[i] * mass_new;
 
-    // Iterate the bodies to join with this one in reverse order
-    // We know that they will be in increasing order of index
+// Iterate the bodies to join with this one in reverse order
+// We know that they will be in increasing order of index
 #pragma omp simd reduction(+ \
                            : x_new_x, x_new_y, x_new_z, v_new_x, v_new_y, v_new_z, mass_new)
     for (int c = 0; c < n_collisions; c++)
@@ -300,48 +305,63 @@ public:
     // force_update_single(i);
   }
 
-#pragma omp declare simd linear(i)
-  inline void force_update_single(int i)
+  inline void force_update()
   {
-    double f_new_x = fx[i];
-    double f_new_y = fy[i];
-    double f_new_z = fz[i];
+    double f_new_x, f_new_y, f_new_z;
     double f_x, f_y, f_z;
     double dx, dy, dz;
 
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      f_new_x = fx[i];
+      f_new_y = fy[i];
+      f_new_z = fz[i];
 #pragma omp simd reduction(+ \
                            : f_new_x, f_new_y, f_new_z)
-    for (int j = i + 1; j < NumberOfBodies; j++)
-    {
-      // Compute distance and track max
-      dx = xx[j] - xx[i];
-      dy = xy[j] - xy[i];
-      dz = xz[j] - xz[i];
+      for (int j = i + 1; j < NumberOfBodies; j++)
+      {
+        // Compute distance and track max
+        dx = xx[j] - xx[i];
+        dy = xy[j] - xy[i];
+        dz = xz[j] - xz[i];
 
-      double distance2 = magnitude_squared(dx, dy, dz);
-      double denom = 1 / (distance2 * std::sqrt(distance2));
+        double distance2 = magnitude_squared(dx, dy, dz);
+        double denom = 1 / (distance2 * std::sqrt(distance2));
+        distances[j] = distance2;
 
-      // Compute new acceleration.
-      // Normally we would divide by m to get acceleration
-      // Instead we skip the mass component of the force and multiply by the other one
-      // That way we avoid multiplying and then dividing in the next step
-      f_x = dx * denom;
-      f_y = dy * denom;
-      f_z = dz * denom;
+        // Compute new acceleration.
+        // Normally we would divide by m to get acceleration
+        // Instead we skip the mass component of the force and multiply by the other one
+        // That way we avoid multiplying and then dividing in the next step
+        f_x = dx * denom;
+        f_y = dy * denom;
+        f_z = dz * denom;
 
-      f_new_x += f_x * mass[j];
-      f_new_y += f_y * mass[j];
-      f_new_z += f_z * mass[j];
+        f_new_x += f_x * mass[j];
+        f_new_y += f_y * mass[j];
+        f_new_z += f_z * mass[j];
 
-      fx[j] -= f_x * mass[i];
-      fy[j] -= f_y * mass[i];
-      fz[j] -= f_z * mass[i];
+        fx[j] -= f_x * mass[i];
+        fy[j] -= f_y * mass[i];
+        fz[j] -= f_z * mass[i];
+      }
+
+      // Assign final force (actually acceleration) value
+      fx[i] = f_new_x;
+      fy[i] = f_new_y;
+      fz[i] = f_new_z;
+
+      // Find min Dx
+      double min_dx = std::numeric_limits<double>::max();
+#pragma omp simd reduction(min \
+                           : min_dx)
+      for (int j = i + 1; j < NumberOfBodies; j++)
+      {
+        min_dx = min_dx < distances[j] ? min_dx : distances[j];
+      }
+
+      minDx = minDx < min_dx ? minDx : min_dx;
     }
-
-    // Assign final force (actually acceleration) value
-    fx[i] = f_new_x;
-    fy[i] = f_new_y;
-    fz[i] = f_new_z;
   }
 
   /**
@@ -373,14 +393,10 @@ public:
     // Zero out old forces
     zero_forces();
 
-// Step 4
-// Calculate new forces from the new positions
-// Iterate upper triangle of all particles
-#pragma omp simd
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      force_update_single(i);
-    }
+    // Step 4
+    // Calculate new forces from the new positions
+    // Iterate upper triangle of all particles
+    force_update();
 
 // Step 5
 // Update the velocities by full time step
@@ -390,7 +406,7 @@ public:
       vx[i] += fx[i] * timeStepSizeHalf;
       vy[i] += fy[i] * timeStepSizeHalf;
       vz[i] += fz[i] * timeStepSizeHalf;
-      vt[i] = magnitude_squared(vx[i], vy[i], vz[i]);
+      velocities[i] = magnitude_squared(vx[i], vy[i], vz[i]);
     }
 
     // Step 6
@@ -405,8 +421,6 @@ public:
         collision_detection(i);
       }
     }
-
-    minDx = std::sqrt(minDx);
 
     t += timeStepSize;
   }
@@ -494,7 +508,8 @@ public:
    */
   void printSnapshotSummary()
   {
-    maxV = std::sqrt(*std::max_element(vt, vt + NumberOfBodies));
+    minDx = std::sqrt(minDx);
+    maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t

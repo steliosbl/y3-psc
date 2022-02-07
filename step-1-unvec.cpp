@@ -45,6 +45,8 @@ class NBodySimulation
   double *fy;
   double *fz;
 
+  double *velocities;
+  double *distances;
   int *collisions;         // Collisions to track
   double *mass;            // Masses of particles
   double timeStepSize;     // Global time step size
@@ -73,6 +75,7 @@ public:
                       xx(nullptr), xy(nullptr), xz(nullptr),
                       vx(nullptr), vy(nullptr), vz(nullptr),
                       fx(nullptr), fy(nullptr), fz(nullptr),
+                      velocities(nullptr), distances(nullptr),
                       mass(nullptr), collisions(nullptr),
                       timeStepSize(0), timeStepSizeHalf(0),
                       maxV(0), minDx(0), videoFile(),
@@ -101,6 +104,10 @@ public:
       delete[] fy;
     if (fz != nullptr)
       delete[] fz;
+    if (velocities != nullptr)
+      delete[] velocities;
+    if (distances != nullptr)
+      delete[] distances;
     if (mass != nullptr)
       delete[] mass;
     if (collisions != nullptr)
@@ -139,6 +146,8 @@ public:
     fx = new double[NumberOfBodies];
     fy = new double[NumberOfBodies];
     fz = new double[NumberOfBodies];
+    velocities = new double[NumberOfBodies];
+    distances = new double[NumberOfBodies];
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
@@ -303,8 +312,6 @@ public:
     double f_new_z = fz[i];
     double f_x, f_y, f_z;
 
-#pragma omp simd reduction(+ \
-                           : f_new_x, f_new_y, f_new_z)
     for (int j = i + 1; j < NumberOfBodies; j++)
     {
       // Compute distance and track max
@@ -387,7 +394,7 @@ public:
       vx[i] += fx[i] * timeStepSizeHalf;
       vy[i] += fy[i] * timeStepSizeHalf;
       vz[i] += fz[i] * timeStepSizeHalf;
-      maxV = std::max(magnitude_squared(vx[i], vy[i], vz[i]), maxV);
+      velocities[i] = magnitude_squared(vx[i], vy[i], vz[i]);
     }
 
     // Step 6
@@ -398,9 +405,6 @@ public:
     {
       collision_detection();
     }
-
-    maxV = std::sqrt(maxV);
-    minDx = std::sqrt(minDx);
 
     t += timeStepSize;
   }
@@ -488,6 +492,8 @@ public:
    */
   void printSnapshotSummary()
   {
+    minDx = std::sqrt(minDx);
+    maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t
