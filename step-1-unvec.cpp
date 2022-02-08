@@ -28,7 +28,7 @@ class NBodySimulation
   double tPlotDelta;
 
   int NumberOfBodies; // Total number of particles (*at a given time*)
-  double C2;          // Collision detection constant (squared)
+  double C;           // Collision detection constant (squared)
 
   // Position components
   double *xx;
@@ -134,7 +134,7 @@ public:
   void setUp(int argc, char **argv)
   {
     NumberOfBodies = (argc - 4) / 7;
-    C2 = 1.0 / (NumberOfBodies * NumberOfBodies * 10000);
+    C = 1.0 / (NumberOfBodies * 100);
     max_mass = 0.0;
 
     xx = new double[NumberOfBodies];
@@ -285,8 +285,7 @@ public:
       int n_collisions = 0; // And count them here
       for (int j = i + 1; j < NumberOfBodies; j++)
       {
-        double mass_sum = (mass[i] + mass[j]);
-        if (distance_squared(i, j) <= C2 * mass_sum * mass_sum)
+        if (distance_squared(i, j) <= C * (mass[i] + mass[j]))
         {
           collisions[n_collisions] = j;
           n_collisions += 1;
@@ -320,8 +319,9 @@ public:
       double dz = xz[j] - xz[i];
 
       double distance2 = magnitude_squared(dx, dy, dz);
-      double denom = 1 / (distance2 * std::sqrt(distance2));
-      minDx = std::min(minDx, distance2);
+      double distance = std::sqrt(distance2);
+      double denom = 1 / (distance2 * distance);
+      minDx = std::min(minDx, distance);
 
       // Compute new acceleration.
       // Normally we would divide by m to get acceleration
@@ -401,7 +401,7 @@ public:
     // Collisions
     // Largest possible collision radius is 2C * the maximum mass of any current particle
     // So if the smallest distance between any two particles is leq this, we should check
-    if (minDx <= C2 * max_mass * max_mass * 4)
+    if (minDx <= C * max_mass * 2)
     {
       collision_detection();
     }
@@ -492,7 +492,6 @@ public:
    */
   void printSnapshotSummary()
   {
-    minDx = std::sqrt(minDx);
     maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
