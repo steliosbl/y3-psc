@@ -46,6 +46,8 @@ class NBodySimulation
   double *fy;
   double *fz;
 
+  double *velocities;
+  double *distances;
   int *collisions;         // Collisions to track
   double *mass;            // Masses of particles
   double timeStepSize;     // Global time step size
@@ -74,6 +76,7 @@ public:
                       xx(nullptr), xy(nullptr), xz(nullptr),
                       vx(nullptr), vy(nullptr), vz(nullptr),
                       fx(nullptr), fy(nullptr), fz(nullptr),
+                      velocities(nullptr), distances(nullptr),
                       mass(nullptr), collisions(nullptr),
                       timeStepSize(0), timeStepSizeHalf(0),
                       maxV(0), minDx(0), videoFile(),
@@ -102,6 +105,10 @@ public:
       delete[] fy;
     if (fz != nullptr)
       delete[] fz;
+    if (velocities != nullptr)
+      delete[] velocities;
+    if (distances != nullptr)
+      delete[] distances;
     if (mass != nullptr)
       delete[] mass;
     if (collisions != nullptr)
@@ -129,7 +136,7 @@ public:
   {
     NumberOfBodies = (argc - 4) / 7;
     C = 1.0 / (NumberOfBodies * 100);
-    C2 = C*C;
+    C2 = C * C;
     max_mass = 0.0;
 
     xx = new double[NumberOfBodies];
@@ -141,7 +148,8 @@ public:
     fx = new double[NumberOfBodies];
     fy = new double[NumberOfBodies];
     fz = new double[NumberOfBodies];
-
+    velocities = new double[NumberOfBodies];
+    distances = new double[NumberOfBodies];
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
@@ -289,6 +297,12 @@ public:
     // Run a second loop to join all particles with this one
     join_particles(i, n_collisions);
     NumberOfBodies -= n_collisions;
+
+    // Re-calc the forces for the resulting particle
+    fx[i] = 0.0;
+    fy[i] = 0.0;
+    fz[i] = 0.0;
+    // force_update_single(i);
   }
 
   inline void force_update()
@@ -296,17 +310,14 @@ public:
     double f_new_x, f_new_y, f_new_z;
     double f_x, f_y, f_z;
     double dx, dy, dz;
-    double min_dx;
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      min_dx = minDx;
       f_new_x = fx[i];
       f_new_y = fy[i];
       f_new_z = fz[i];
-#pragma omp simd reduction(+                                          \
-                           : f_new_x, f_new_y, f_new_z) reduction(min \
-                                                                  : min_dx)
+#pragma omp simd reduction(+ \
+                           : f_new_x, f_new_y, f_new_z)
       for (int j = i + 1; j < NumberOfBodies; j++)
       {
         // Compute distance and track max
@@ -317,10 +328,7 @@ public:
         double distance2 = magnitude_squared(dx, dy, dz);
         double distance = std::sqrt(distance2);
         double denom = 1 / (distance2 * distance);
-        if (distance < min_dx)
-        {
-          min_dx = distance;
-        }
+        distances[j] = distance;
 
         // Compute new acceleration.
         // Normally we would divide by m to get acceleration
@@ -344,8 +352,16 @@ public:
       fy[i] = f_new_y;
       fz[i] = f_new_z;
 
-      // Store min Dx
-      minDx = min_dx < minDx ? min_dx : minDx;
+      // Find min Dx
+      double min_dx = std::numeric_limits<double>::max();
+#pragma omp simd reduction(min \
+                           : min_dx)
+      for (int j = i + 1; j < NumberOfBodies; j++)
+      {
+        min_dx = min_dx < distances[j] ? min_dx : distances[j];
+      }
+
+      minDx = minDx < min_dx ? minDx : min_dx;
     }
   }
 
@@ -357,7 +373,6 @@ public:
     timeStepCounter++;
     maxV = 0.0;
     minDx = std::numeric_limits<double>::max();
-    double max_v = 0.0;
 
 #pragma omp simd
     for (int i = 0; i < NumberOfBodies; i++)
@@ -375,7 +390,27 @@ public:
       xz[i] += vz[i] * timeStepSize;
     }
 
-        // Step 6
+    // Step 3
+    // Zero out old forces
+    zero_forces();
+
+    // Step 4
+    // Calculate new forces from the new positions
+    // Iterate upper triangle of all particles
+    force_update();
+
+// Step 5
+// Update the velocities by full time step
+#pragma omp simd
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      vx[i] += fx[i] * timeStepSizeHalf;
+      vy[i] += fy[i] * timeStepSizeHalf;
+      vz[i] += fz[i] * timeStepSizeHalf;
+      velocities[i] = magnitude_squared(vx[i], vy[i], vz[i]);
+    }
+
+    // Step 6
     // Collisions
     // Largest possible collision radius is 2C * the maximum mass of any current particle
     // So if the smallest distance between any two particles is leq this, we should check
@@ -388,30 +423,6 @@ public:
       }
     }
 
-    // Step 3
-    // Zero out old forces
-    zero_forces();
-
-    // Step 4
-    // Calculate new forces from the new positions
-    // Iterate upper triangle of all particles
-    force_update();
-
-// Step 5
-// Update the velocities by full time step
-#pragma omp simd reduction(max:max_v)
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      vx[i] += fx[i] * timeStepSizeHalf;
-      vy[i] += fy[i] * timeStepSizeHalf;
-      vz[i] += fz[i] * timeStepSizeHalf;
-      double velocity = magnitude_squared(vx[i], vy[i], vz[i]);
-      if (velocity > max_v) {
-        max_v = velocity;
-      }
-    }
-
-    maxV = max_v;
     t += timeStepSize;
   }
 
@@ -498,7 +509,7 @@ public:
    */
   void printSnapshotSummary()
   {
-    maxV = std::sqrt(maxV);
+    maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t
