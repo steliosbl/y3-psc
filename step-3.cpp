@@ -8,6 +8,8 @@
 #include <sstream>
 #include <string>
 #include <cstring>
+#include <omp.h>
+#define DISABLE_OUT true
 
 // You can compile this file with
 // g++ -O3 assignment-code.cpp -o assignment-code
@@ -424,6 +426,10 @@ public:
     }
 
     t += timeStepSize;
+    if (t >= tPlot)
+    {
+      maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
+    }
   }
 
   /**
@@ -509,7 +515,6 @@ public:
    */
   void printSnapshotSummary()
   {
-    maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t
@@ -595,17 +600,25 @@ int main(int argc, char **argv)
   // Code that initialises and runs the simulation.
   NBodySimulation nbs;
   nbs.setUp(argc, argv);
-  nbs.openParaviewVideoFile();
-  nbs.takeSnapshot();
+  if (!DISABLE_OUT)
+  {
+    nbs.openParaviewVideoFile();
+    nbs.takeSnapshot();
+  }
 
   while (!nbs.hasReachedEnd())
   {
     nbs.updateBody();
-    nbs.takeSnapshot();
+    if (!DISABLE_OUT)
+    {
+      nbs.takeSnapshot();
+    }
   }
 
   nbs.printSummary();
-  nbs.closeParaviewVideoFile();
-
+  if (!DISABLE_OUT)
+  {
+    nbs.closeParaviewVideoFile();
+  }
   return 0;
 }

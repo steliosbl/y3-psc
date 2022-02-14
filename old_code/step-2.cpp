@@ -24,6 +24,161 @@
 #define DOMAIN 10.0
 #define ALPHA 1.0
 
+#define vec3_iterate(idx, start, stop)             \
+  for (idx.x = start.x; idx.x < stop.x; idx.x++)   \
+    for (idx.y = start.y; idx.y < stop.y; idx.y++) \
+      for (idx.z = start.z; idx.z < stop.z; idx.z++)
+
+struct vec3
+{
+  double x, y, z;
+  vec3()
+  {
+  }
+
+  vec3(double x, double y, double z)
+  {
+    this->x = x;
+    this->y = y;
+    this->z = z;
+  }
+
+  vec3(double x)
+  {
+    this->x = x;
+    this->y = x;
+    this->z = x;
+  }
+
+  inline vec3 &operator+=(const vec3 &b)
+  {
+    this->x += b.x;
+    this->y += b.y;
+    this->z += b.z;
+    return *this;
+  }
+
+  inline vec3 &operator-=(const vec3 &b)
+  {
+    this->x -= b.x;
+    this->y -= b.y;
+    this->z -= b.z;
+    return *this;
+  }
+
+  inline vec3 &operator*=(const vec3 &b)
+  {
+    this->x *= b.x;
+    this->y *= b.y;
+    this->z *= b.z;
+    return *this;
+  }
+
+  inline vec3 &operator/=(const vec3 &b)
+  {
+    this->x /= b.x;
+    this->y /= b.y;
+    this->z /= b.z;
+    return *this;
+  }
+
+  inline vec3 &operator*=(const double &b)
+  {
+    this->x *= b;
+    this->y *= b;
+    this->z *= b;
+    return *this;
+  }
+
+  inline vec3 &operator/=(const double &b)
+  {
+    this->x /= b;
+    this->y /= b;
+    this->z /= b;
+    return *this;
+  }
+};
+
+inline vec3 operator+(vec3 a, const vec3 &b)
+{
+  a += b;
+  return a;
+}
+
+inline vec3 operator-(vec3 a, const vec3 &b)
+{
+  a -= b;
+  return a;
+}
+
+inline vec3 operator*(vec3 a, const vec3 &b)
+{
+  a *= b;
+  return a;
+}
+
+inline vec3 operator/(vec3 a, const vec3 &b)
+{
+  a /= b;
+  return a;
+}
+
+inline vec3 operator*(vec3 a, const double &b)
+{
+  a *= b;
+  return a;
+}
+
+inline vec3 operator/(vec3 a, const double &b)
+{
+  a /= b;
+  return a;
+}
+
+inline double magnitude(const vec3 &a)
+{
+  return sqrt(
+      a.x * a.x +
+      a.y * a.y +
+      a.z * a.z);
+}
+
+inline double magnitude_squared(const vec3 &a)
+{
+  return a.x * a.x +
+         a.y * a.y +
+         a.z * a.z;
+}
+
+struct Particle
+{
+  struct vec3 x;
+  struct vec3 v;
+  struct vec3 f;
+  struct Particle *next;
+
+  Particle() {}
+
+  Particle(vec3 x, vec3 v, vec3 f, Particle *next)
+  {
+    this->x = x;
+    this->v = v;
+    this->f = f;
+    this->next = next;
+  }
+};
+
+inline void insert_particle(Particle **root, Particle *i)
+{
+  i->next = *root;
+  *root = i;
+}
+
+inline void remove_particle(Particle **i)
+{
+  *i = (*i)->next;
+}
+
 class NBodySimulation
 {
 
@@ -38,34 +193,20 @@ class NBodySimulation
   double CELL_SIDE_LEN = RCUT / ALPHA;
   double RCUT_2 = RCUT * RCUT;
 
-  // Position components
-  double *xx;
-  double *xy;
-  double *xz;
+  Particle *particles;
+  Particle **cells;
 
-  // Velocity components
-  double *vx;
-  double *vy;
-  double *vz;
-
-  // Force components
-  double *fx;
-  double *fy;
-  double *fz;
-
-  // Linked-cell algorithm cells & linked-list
-  int *cells;
-  int *next_particle;
+  vec3 *f; // Force components
 
   int *neighbour_indices;
   int n_neighbours;
 
-  double *velocities;
-  double *mass;            // Masses of particles
-  double timeStepSize;     // Global time step size
-  double timeStepSizeHalf; // Global time step size halved
-  double maxV;             // Maximum velocity of all particles
-  double minDx;            // Minimum distance between two elements
+  double *mass;               // Masses of particles
+  double timeStepSize;        // Global time step size
+  double timeStepSizeInitial; // Global time step size
+  double maxV;                // Maximum velocity of all particles
+  double minDx;               // Minimum distance between two elements
+  vec3 momentum;
 
   /**
    * Stream for video output file.
@@ -82,13 +223,9 @@ public:
   /**
    * Constructor.
    */
-  NBodySimulation() : t(0), tFinal(0), tPlot(0), tPlotDelta(0),
-                      xx(nullptr), xy(nullptr), xz(nullptr),
-                      vx(nullptr), vy(nullptr), vz(nullptr),
-                      fx(nullptr), fy(nullptr), fz(nullptr),
-                      mass(nullptr), neighbour_indices(nullptr),
-                      velocities(nullptr), timeStepSize(0),
-                      maxV(0), minDx(0), videoFile(), NumberOfBodies(0),
+  NBodySimulation() : t(0), tFinal(0), tPlot(0), tPlotDelta(0), NumberOfBodies(0),
+                      cells(nullptr), particles(nullptr), f(nullptr), mass(nullptr), neighbour_indices(nullptr),
+                      timeStepSize(0), timeStepSizeInitial(0), maxV(0), minDx(0), videoFile(),
                       snapshotCounter(0), timeStepCounter(0){};
 
   /**
@@ -96,49 +233,26 @@ public:
    */
   ~NBodySimulation()
   {
-    if (xx != nullptr)
-      delete[] xx;
-    if (xy != nullptr)
-      delete[] xy;
-    if (xz != nullptr)
-      delete[] xz;
-    if (vx != nullptr)
-      delete[] vx;
-    if (vy != nullptr)
-      delete[] vy;
-    if (vz != nullptr)
-      delete[] vz;
-    if (fx != nullptr)
-      delete[] fx;
-    if (fy != nullptr)
-      delete[] fy;
-    if (fz != nullptr)
-      delete[] fz;
-    if (velocities != nullptr)
-      delete[] velocities;
+    if (cells != nullptr)
+    {
+      delete[] cells;
+    }
+    if (particles != nullptr)
+    {
+      delete[] particles;
+    }
+    if (f != nullptr)
+    {
+      delete[] f;
+    }
     if (mass != nullptr)
+    {
       delete[] mass;
+    }
     if (neighbour_indices != nullptr)
+    {
       delete[] neighbour_indices;
-  }
-
-  inline double distance_squared(int i, int j)
-  {
-    return (xx[i] - xx[j]) * (xx[i] - xx[j]) +
-           (xy[i] - xy[j]) * (xy[i] - xy[j]) +
-           (xz[i] - xz[j]) * (xz[i] - xz[j]);
-  }
-
-  inline double magnitude_squared(double a, double b, double c)
-  {
-    return a * a + b * b + c * c;
-  }
-
-  inline void zero_forces()
-  {
-    std::fill(fx, fx + NumberOfBodies, 0);
-    std::fill(fy, fy + NumberOfBodies, 0);
-    std::fill(fz, fz + NumberOfBodies, 0);
+    }
   }
 
   void init_neighbour_indices()
@@ -147,6 +261,7 @@ public:
     int n_max = (ALPHA + 1) * (ALPHA + 1) * (ALPHA + 1);
     int *results = new int[n_max];
     int n_results = 0;
+    vec3 corner;
 
     for (int x = 1; x <= ALPHA + 1; x++)
     {
@@ -184,17 +299,27 @@ public:
     delete[] results;
   }
 
+  inline void zero_forces()
+  {
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      f[i] = {0.0, 0.0, 0.0};
+    }
+  }
+
   inline int scalar_cell_index(int x, int y, int z)
   {
     return x + NC * y + NC * NC * z;
   }
 
-  inline int scalar_cell_index(int i)
+  inline int scalar_cell_index(vec3 i)
   {
-    double x = (xx[i] + DOMAIN / 2) / CELL_SIDE_LEN;
-    double y = (xy[i] + DOMAIN / 2) / CELL_SIDE_LEN;
-    double z = (xz[i] + DOMAIN / 2) / CELL_SIDE_LEN;
-    return scalar_cell_index(x, y, z);
+    return scalar_cell_index(i.x, i.y, i.z);
+  }
+
+  inline int scalar_cell_index(Particle *i)
+  {
+    return scalar_cell_index((i->x + DOMAIN / 2) / CELL_SIDE_LEN);
   }
 
   void sort_particles()
@@ -204,11 +329,11 @@ public:
     {
 
       // Take the head of the linked list of that cell
-      int *prev = &cells[c];
-      int i = cells[c];
+      Particle **prev = &cells[c];
+      Particle *i = *prev;
 
       // As long as we have particles in this cell
-      while (i != -1)
+      while (i != nullptr)
       {
 
         // Get the new cell index for the particle
@@ -218,17 +343,17 @@ public:
         {
 
           // Make the next of the particle be the new head of the cell
-          *prev = next_particle[i];
+          *prev = i->next;
 
           // Make the next of the particle be the head of the new cell
-          next_particle[i] = cells[p_c];
+          i->next = cells[p_c];
 
           // Make the head of the new cell be the particle
           cells[p_c] = i;
         }
         else
         {
-          prev = &next_particle[i];
+          prev = &i->next;
         }
 
         // Move to the next particle in the linked list
@@ -253,21 +378,16 @@ public:
     NumberOfBodies = (argc - 4) / 7;
 
     // Initialise data structures
-    cells = new int[N_CELLS];
-    next_particle = new int[NumberOfBodies];
-    xx = new double[NumberOfBodies];
-    xy = new double[NumberOfBodies];
-    xz = new double[NumberOfBodies];
-    vx = new double[NumberOfBodies];
-    vy = new double[NumberOfBodies];
-    vz = new double[NumberOfBodies];
-    fx = new double[NumberOfBodies];
-    fy = new double[NumberOfBodies];
-    fz = new double[NumberOfBodies];
+    cells = new Particle *[N_CELLS];
+    particles = new Particle[NumberOfBodies];
+    f = new vec3[NumberOfBodies];
     mass = new double[NumberOfBodies];
-    velocities = new double[NumberOfBodies];
 
-    std::fill(cells, cells + N_CELLS, -1);
+    // Init cells as empty pointers
+    for (int i = 0; i < N_CELLS; i++)
+    {
+      cells[i] = nullptr;
+    }
 
     // Zero out the forces
     zero_forces();
@@ -282,23 +402,22 @@ public:
     readArgument++;
     tFinal = std::stof(argv[readArgument]);
     readArgument++;
-    timeStepSize = std::stof(argv[readArgument]);
-    timeStepSizeHalf = timeStepSize / 2;
+    timeStepSizeInitial = timeStepSize = std::stof(argv[readArgument]);
     readArgument++;
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      xx[i] = std::stof(argv[readArgument]);
-      xy[i] = std::stof(argv[readArgument + 1]);
-      xz[i] = std::stof(argv[readArgument + 2]);
-      readArgument += 3;
-
-      vx[i] = std::stof(argv[readArgument]);
-      vy[i] = std::stof(argv[readArgument + 1]);
-      vz[i] = std::stof(argv[readArgument + 2]);
-      readArgument += 3;
-
-      next_particle[i] = i + 1;
+      particles[i] = Particle(
+          vec3(
+              std::stof(argv[readArgument]),
+              std::stof(argv[readArgument + 1]),
+              std::stof(argv[readArgument + 2])),
+          vec3(
+              std::stof(argv[readArgument + 3]),
+              std::stof(argv[readArgument + 4]),
+              std::stof(argv[readArgument + 5])),
+          vec3(0.0), &particles[i + 1]);
+      readArgument += 6;
 
       mass[i] = std::stof(argv[readArgument]);
       readArgument++;
@@ -312,10 +431,10 @@ public:
 
     // So far we have assigned each particle's next to be the following particle we read
     // For the last one, make it an null pointer
-    next_particle[NumberOfBodies - 1] = -1;
+    particles[NumberOfBodies - 1].next = nullptr;
 
     // Make the head of the 0th cell be the 0th particle which then links to the rest
-    cells[0] = 0;
+    cells[0] = &particles[0];
 
     // Sort the particles into actual cells
     sort_particles();
@@ -338,72 +457,43 @@ public:
 
   inline void force_update_cell_pair(int cell_i, int cell_j)
   {
-    double min_dx = minDx;
-    double f_new_x, f_new_y, f_new_z;
-    double f_x, f_y, f_z;
-    double dx, dy, dz;
-
     // Get the head of the cell_i's linked list
-    int i = cells[cell_i];
+    Particle *i = cells[cell_i];
 
     // While there are particles to go through
-    while (i != -1)
+    while (i != nullptr)
     {
-      int j = (cell_i == cell_j) ? next_particle[i] : cells[cell_j];
-      f_new_x = fx[i];
-      f_new_y = fy[i];
-      f_new_z = fz[i];
+      Particle *j = (cell_i == cell_j) ? i->next : cells[cell_j];
 
       // While there are particles to go through
-      while (j != -1)
+      while (j != nullptr)
       {
         // If the two particles are distinct
         if (j != i)
         {
-          // Compute distance and track max
-          dx = xx[i] - xx[j];
-          dy = xy[i] - xy[j];
-          dz = xz[i] - xz[j];
-
-          double d2 = magnitude_squared(dx, dy, dz);
-          min_dx = std::min(d2, min_dx);
+          // Get the distance between the particles
+          vec3 distance_vec = i->x - j->x;
+          double d2 = magnitude_squared(distance_vec);
+          minDx = std::min(d2, minDx);
 
           // Check whether the particles are in range
           if (d2 <= RCUT_2)
           {
-            // d^-4 = 1/(d^2*d^2)
-            double d4 = 1 / (d2 * d2);
+            // d^6 = d^2^3
+            double d6 = 1 / (d2 * d2 * d2);
+            // LJ = (d^12-d^6)/d = d^6 * d *(d^6 -1)
+            double lj = d6 * d6 - d6;
 
-            // d^-8 = d^-4 * d^-4
-            double d8 = d4 * d4;
+            vec3 force = lj * distance_vec;
 
-            // LJ = d^-14 - d^-8 = d^-8 (d^-8*d^2 - 1)
-            double lj = d8 * (d8 * d2 - 1);
-
-            f_x = dx * lj;
-            f_y = dy * lj;
-            f_z = dz * lj;
-
-            f_new_x += f_x;
-            f_new_y += f_y;
-            f_new_z += f_z;
-
-            fx[j] -= f_x;
-            fy[j] -= f_y;
-            fz[j] -= f_z;
+            i->f += force;
+            j->f -= force;
           }
         }
-        j = next_particle[j];
+        j = j->next;
       }
-
-      // Assign final force (actually acceleration) value
-      fx[i] = f_new_x;
-      fy[i] = f_new_y;
-      fz[i] = f_new_z;
-      i = next_particle[i];
+      i = i->next;
     }
-
-    minDx = min_dx < minDx ? min_dx : minDx;
   }
 
   inline void force_update_all()
@@ -438,24 +528,17 @@ public:
     timeStepCounter++;
     maxV = 0.0;
     minDx = std::numeric_limits<double>::max();
+    momentum = vec3(0.0);
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
+      Particle *p = &particles[i];
       // Step 1
       // Compute half the next Euler time-step for velocity
-      vx[i] += fx[i] * timeStepSizeHalf;
-      vy[i] += fy[i] * timeStepSizeHalf;
-      vz[i] += fz[i] * timeStepSizeHalf;
-
-      // Step 2
-      // Update positions
-      xx[i] += vx[i] * timeStepSize;
-      xy[i] += vy[i] * timeStepSize;
-      xz[i] += vz[i] * timeStepSize;
+      p->v += p->f * (timeStepSize / 2);
+      p->x += p->v * timeStepSize;
     }
 
-    // Step 2.5
-    // Update cells
     sort_particles();
 
     // Step 3
@@ -466,18 +549,22 @@ public:
     // Calculate new forces from the new positions
     force_update_all();
 
-    // Step 5
-    // Update the velocities by full time step
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      vx[i] += (fx[i] / mass[i]) * timeStepSizeHalf;
-      vy[i] += (fy[i] / mass[i]) * timeStepSizeHalf;
-      vz[i] += (fz[i] / mass[i]) * timeStepSizeHalf;
-      velocities[i] = magnitude_squared(vx[i], vy[i], vz[i]);
+      Particle *p = &particles[i];
+      p->f *= mass[i];
+      // Step 1
+      // Compute half the next Euler time-step for velocity
+      p->v += p->f * (timeStepSize / 2);
+      maxV = std::max(magnitude_squared(p->v), maxV);
+      momentum += p->v * mass[i];
     }
 
+    maxV = std::sqrt(maxV);
+    minDx = std::sqrt(minDx);
+
     t += timeStepSize;
-  }
+    }
 
   /**
    * Check if simulation has been completed.
@@ -536,11 +623,11 @@ public:
 
     for (int i = 0; i < NumberOfBodies; i++)
     {
-      out << xx[i]
+      out << particles[i].x.x
           << " "
-          << xy[i]
+          << particles[i].x.y
           << " "
-          << xz[i]
+          << particles[i].x.z
           << " ";
     }
 
@@ -562,14 +649,13 @@ public:
    */
   void printSnapshotSummary()
   {
-    maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
-    minDx = std::sqrt(minDx);
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t
               << ",\t dt=" << timeStepSize
               << ",\t v_max=" << maxV
               << ",\t dx_min=" << minDx
+              << ",\t momentum=" << magnitude(momentum)
               << std::endl;
   }
 
@@ -593,7 +679,7 @@ public:
   {
     std::cout << "Number of remaining objects: " << NumberOfBodies << std::endl;
     std::cout << "Position of first remaining object: "
-              << xx[0] << ", " << xy[0] << ", " << xz[0] << std::endl;
+              << particles[0].x.x << ", " << particles[0].x.y << ", " << particles[0].x.z << std::endl;
   }
 };
 
@@ -662,6 +748,5 @@ int main(int argc, char **argv)
   nbs.printSummary();
   nbs.closeParaviewVideoFile();
 
-  return 0;
   return 0;
 }

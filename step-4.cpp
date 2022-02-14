@@ -9,6 +9,7 @@
 #include <string>
 #include <cstring>
 #include <omp.h>
+#define DISABLE_OUT true
 
 // You can compile this file with
 // g++ -O3 assignment-code.cpp -o assignment-code
@@ -30,6 +31,7 @@ class NBodySimulation
 
   int NumberOfBodies; // Total number of particles (*at a given time*)
   double C;           // Collision detection constant (squared)
+  double C2;
 
   // Position components
   double *xx;
@@ -46,10 +48,10 @@ class NBodySimulation
   double *fy;
   double *fz;
 
-  // New force buffers
-  double *fx_new;
-  double *fy_new;
-  double *fz_new;
+  // Force buffers for multithreading
+  double *fnew_x;
+  double *fnew_y;
+  double *fnew_z;
 
   double *velocities;
   double *distances;
@@ -60,6 +62,7 @@ class NBodySimulation
   double maxV;             // Maximum velocity of all particles
   double minDx;            // Minimum distance between two elements
   double max_mass;
+  int max_threads;
 
   /**
    * Stream for video output file.
@@ -81,7 +84,7 @@ public:
                       xx(nullptr), xy(nullptr), xz(nullptr),
                       vx(nullptr), vy(nullptr), vz(nullptr),
                       fx(nullptr), fy(nullptr), fz(nullptr),
-                      fx_new(nullptr), fy_new(nullptr), fz_new(nullptr),
+                      fnew_x(nullptr), fnew_y(nullptr), fnew_z(nullptr),
                       velocities(nullptr), distances(nullptr),
                       mass(nullptr), collisions(nullptr),
                       timeStepSize(0), timeStepSizeHalf(0),
@@ -111,12 +114,12 @@ public:
       delete[] fy;
     if (fz != nullptr)
       delete[] fz;
-    if (fx_new != nullptr)
-      delete[] fx_new;
-    if (fy_new != nullptr)
-      delete[] fy_new;
-    if (fz_new != nullptr)
-      delete[] fz_new;
+    if (fnew_x != nullptr)
+      delete[] fnew_x;
+    if (fnew_y != nullptr)
+      delete[] fnew_y;
+    if (fnew_z != nullptr)
+      delete[] fnew_z;
     if (velocities != nullptr)
       delete[] velocities;
     if (distances != nullptr)
@@ -129,9 +132,16 @@ public:
 
   inline void zero_forces()
   {
-    std::fill(fx, fx + NumberOfBodies, 0);
-    std::fill(fy, fy + NumberOfBodies, 0);
-    std::fill(fz, fz + NumberOfBodies, 0);
+    std::fill(fx, fx + NumberOfBodies, 0.0);
+    std::fill(fy, fy + NumberOfBodies, 0.0);
+    std::fill(fz, fz + NumberOfBodies, 0.0);
+  }
+
+  inline void zero_force_buffers()
+  {
+    std::fill(fnew_x, fnew_x + NumberOfBodies * max_threads, 0.0);
+    std::fill(fnew_y, fnew_y + NumberOfBodies * max_threads, 0.0);
+    std::fill(fnew_z, fnew_z + NumberOfBodies * max_threads, 0.0);
   }
 
   /**
@@ -148,7 +158,9 @@ public:
   {
     NumberOfBodies = (argc - 4) / 7;
     C = 1.0 / (NumberOfBodies * 100);
+    C2 = C * C;
     max_mass = 0.0;
+    max_threads = omp_get_max_threads();
 
     xx = new double[NumberOfBodies];
     xy = new double[NumberOfBodies];
@@ -159,11 +171,17 @@ public:
     fx = new double[NumberOfBodies];
     fy = new double[NumberOfBodies];
     fz = new double[NumberOfBodies];
+
+    fnew_x = new double[NumberOfBodies * max_threads];
+    fnew_y = new double[NumberOfBodies * max_threads];
+    fnew_z = new double[NumberOfBodies * max_threads];
+
     velocities = new double[NumberOfBodies];
     distances = new double[NumberOfBodies];
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
+    zero_force_buffers();
 
     int readArgument = 1;
 
@@ -297,7 +315,8 @@ public:
     int n_collisions = 0; // And count them here
     for (int j = i + 1; j < NumberOfBodies; j++)
     {
-      if (distance_squared(i, j) <= C * (mass[i] + mass[j]))
+      double mass_sum = (mass[i] + mass[j]);
+      if (distance_squared(i, j) <= C2 * mass_sum * mass_sum)
       {
         collisions[n_collisions] = j;
         n_collisions += 1;
@@ -315,77 +334,91 @@ public:
     // force_update_single(i);
   }
 
-  inline void force_update(double *fx_new, double *fy_new, double *fz_new)
+  inline void force_update()
   {
     double f_new_x, f_new_y, f_new_z;
     double f_x, f_y, f_z;
     double dx, dy, dz;
-    int offset = NumberOfBodies * omp_get_thread_num();
-
-#pragma omp for
-    for (int i = 0; i < NumberOfBodies; i++)
+    double min_dx = std::numeric_limits<double>::max();
+    int offset;
+#pragma omp parallel shared(min_dx) private(offset, f_new_x, f_new_y, f_new_z, f_x, f_y, f_z, dx, dy, dz) default(none)
     {
-      f_new_x = 0;
-      f_new_y = 0;
-      f_new_z = 0;
+
+// Use chunk size 1 because inner loop will get smaller and smaller
+// This way, on average, each thread does same amount of work
+#pragma omp for schedule(static, 1) reduction(min \
+                                              : min_dx)
+      for (int i = 0; i < NumberOfBodies; i++)
+      {
+        offset = NumberOfBodies * omp_get_thread_num();
+        f_new_x = fx[i];
+        f_new_y = fy[i];
+        f_new_z = fz[i];
 #pragma omp simd reduction(+ \
                            : f_new_x, f_new_y, f_new_z)
-      for (int j = i + 1; j < NumberOfBodies; j++)
-      {
-        // Compute distance and track max
-        dx = xx[j] - xx[i];
-        dy = xy[j] - xy[i];
-        dz = xz[j] - xz[i];
+        for (int j = i + 1; j < NumberOfBodies; j++)
+        {
+          // Compute distance and track max
+          dx = xx[j] - xx[i];
+          dy = xy[j] - xy[i];
+          dz = xz[j] - xz[i];
 
-        double distance2 = magnitude_squared(dx, dy, dz);
-        double distance = std::sqrt(distance2);
-        double denom = 1 / (distance2 * distance);
-        distances[j] = distance;
+          double distance2 = magnitude_squared(dx, dy, dz);
+          double distance = std::sqrt(distance2);
+          double denom = 1 / (distance2 * distance);
+          distances[j] = distance;
 
-        // Compute new acceleration.
-        // Normally we would divide by m to get acceleration
-        // Instead we skip the mass component of the force and multiply by the other one
-        // That way we avoid multiplying and then dividing in the next step
-        f_x = dx * denom;
-        f_y = dy * denom;
-        f_z = dz * denom;
+          // Compute new acceleration.
+          // Normally we would divide by m to get acceleration
+          // Instead we skip the mass component of the force and multiply by the other one
+          // That way we avoid multiplying and then dividing in the next step
+          f_x = dx * denom;
+          f_y = dy * denom;
+          f_z = dz * denom;
 
-        f_new_x = f_x * mass[j];
-        f_new_y = f_y * mass[j];
-        f_new_z = f_z * mass[j];
+          f_new_x += f_x * mass[j];
+          f_new_y += f_y * mass[j];
+          f_new_z += f_z * mass[j];
 
-        fx_new[j + offset] -= f_x * mass[i];
-        fy_new[j + offset] -= f_y * mass[i];
-        fz_new[j + offset] -= f_z * mass[i];
-      }
+          fnew_x[j + offset] -= f_x * mass[i];
+          fnew_y[j + offset] -= f_y * mass[i];
+          fnew_z[j + offset] -= f_z * mass[i];
+        }
 
-      // Assign final force (actually acceleration) value
-      fx_new[i + offset] += f_new_x;
-      fy_new[i + offset] += f_new_y;
-      fz_new[i + offset] += f_new_z;
+        // Assign final force (actually acceleration) value
+        fnew_x[i + offset] += f_new_x;
+        fnew_y[i + offset] += f_new_y;
+        fnew_z[i + offset] += f_new_z;
 
-      // Find min Dx
-      double min_dx = std::numeric_limits<double>::max();
+// Find min Dx
 #pragma omp simd reduction(min \
                            : min_dx)
-      for (int j = i + 1; j < NumberOfBodies; j++)
-      {
-        min_dx = min_dx < distances[j] ? min_dx : distances[j];
+        for (int j = i + 1; j < NumberOfBodies; j++)
+        {
+          min_dx = min_dx < distances[j] ? min_dx : distances[j];
+        }
       }
-
-      minDx = minDx < min_dx ? minDx : min_dx;
-    }
 
 #pragma omp for
-    for (int i = 0; i < NumberOfBodies; i++)
-    {
-      for (int t = 0; t < omp_get_num_threads(); t++)
+      for (int i = 0; i < NumberOfBodies; i++)
       {
-        fx[i] += fx_new[i + NumberOfBodies * t];
-        fy[i] += fy_new[i + NumberOfBodies * t];
-        fz[i] += fz_new[i + NumberOfBodies * t];
+        f_new_x = f_new_y = f_new_z = 0.0;
+#pragma omp simd reduction(+ \
+                           : f_new_x, f_new_y, f_new_z)
+        for (int t = 0; t < max_threads; t++)
+        {
+          f_new_x += fnew_x[i + t * NumberOfBodies];
+          f_new_y += fnew_y[i + t * NumberOfBodies];
+          f_new_z += fnew_z[i + t * NumberOfBodies];
+        }
+
+        fx[i] = f_new_x;
+        fy[i] = f_new_y;
+        fz[i] = f_new_z;
       }
     }
+
+    minDx = minDx < min_dx ? minDx : min_dx;
   }
 
   /**
@@ -397,60 +430,43 @@ public:
     maxV = 0.0;
     minDx = std::numeric_limits<double>::max();
 
-#pragma omp parallel shared(fx, fy, fz, vx, vy, vz, xx, xy, xz, mass, fx_new, fy_new, fz_new) default(none)
+#pragma omp simd
+    for (int i = 0; i < NumberOfBodies; i++)
     {
-#pragma omp single
-      {
-        fx_new = new double[NumberOfBodies * omp_get_num_threads()];
-        fy_new = new double[NumberOfBodies * omp_get_num_threads()];
-        fz_new = new double[NumberOfBodies * omp_get_num_threads()];
-        std::fill_n(fx_new, NumberOfBodies * omp_get_num_threads(), 0.0);
-        std::fill_n(fy_new, NumberOfBodies * omp_get_num_threads(), 0.0);
-        std::fill_n(fz_new, NumberOfBodies * omp_get_num_threads(), 0.0);
-      }
+      // Step 1
+      // Compute half the next Euler time-step for velocity
+      vx[i] += fx[i] * timeStepSizeHalf;
+      vy[i] += fy[i] * timeStepSizeHalf;
+      vz[i] += fz[i] * timeStepSizeHalf;
 
-#pragma omp for simd
-      for (int i = 0; i < NumberOfBodies; i++)
-      {
-        // Step 1
-        // Compute half the next Euler time-step for velocity
-        vx[i] += fx[i] * timeStepSizeHalf;
-        vy[i] += fy[i] * timeStepSizeHalf;
-        vz[i] += fz[i] * timeStepSizeHalf;
+      // Step 2
+      // Update positions
+      xx[i] += vx[i] * timeStepSize;
+      xy[i] += vy[i] * timeStepSize;
+      xz[i] += vz[i] * timeStepSize;
+    }
 
-        // Step 2
-        // Update positions
-        xx[i] += vx[i] * timeStepSize;
-        xy[i] += vy[i] * timeStepSize;
-        xz[i] += vz[i] * timeStepSize;
-      }
+    // Step 3
+    // Zero out old forces
+    zero_forces();
+    zero_force_buffers();
 
-#pragma omp barrier
-#pragma omp single
-      {
-        // Step 3
-        // Zero out old forces
-        zero_forces();
-      }
-
-#pragma omp barrier
-      // Step 4
-      // Calculate new forces from the new positions
-      // Iterate upper triangle of all particles
-      force_update(fx_new, fy_new, fz_new);
-#pragma omp barrier
+    // Step 4
+    // Calculate new forces from the new positions
+    // Iterate upper triangle of all particles
+    force_update();
 
 // Step 5
 // Update the velocities by full time step
-#pragma omp for simd
-      for (int i = 0; i < NumberOfBodies; i++)
-      {
-        vx[i] += fx[i] * timeStepSizeHalf;
-        vy[i] += fy[i] * timeStepSizeHalf;
-        vz[i] += fz[i] * timeStepSizeHalf;
-        velocities[i] = magnitude_squared(vx[i], vy[i], vz[i]);
-      }
+#pragma omp simd
+    for (int i = 0; i < NumberOfBodies; i++)
+    {
+      vx[i] += fx[i] * timeStepSizeHalf;
+      vy[i] += fy[i] * timeStepSizeHalf;
+      vz[i] += fz[i] * timeStepSizeHalf;
+      velocities[i] = magnitude_squared(vx[i], vy[i], vz[i]);
     }
+
     // Step 6
     // Collisions
     // Largest possible collision radius is 2C * the maximum mass of any current particle
@@ -465,6 +481,10 @@ public:
     }
 
     t += timeStepSize;
+    if (t >= tPlot)
+    {
+      maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
+    }
   }
 
   /**
@@ -550,7 +570,6 @@ public:
    */
   void printSnapshotSummary()
   {
-    maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     std::cout << "plot next snapshot"
               << ",\t time step=" << timeStepCounter
               << ",\t t=" << t
@@ -636,17 +655,26 @@ int main(int argc, char **argv)
   // Code that initialises and runs the simulation.
   NBodySimulation nbs;
   nbs.setUp(argc, argv);
-  nbs.openParaviewVideoFile();
-  nbs.takeSnapshot();
+  if (!DISABLE_OUT)
+  {
+    nbs.openParaviewVideoFile();
+    nbs.takeSnapshot();
+  }
 
   while (!nbs.hasReachedEnd())
   {
     nbs.updateBody();
-    nbs.takeSnapshot();
+    if (!DISABLE_OUT)
+    {
+      nbs.takeSnapshot();
+    }
   }
 
   nbs.printSummary();
-  nbs.closeParaviewVideoFile();
+  if (!DISABLE_OUT)
+  {
+    nbs.closeParaviewVideoFile();
+  }
 
   return 0;
 }

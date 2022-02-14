@@ -46,6 +46,7 @@ class NBodySimulation
   double *fy;
   double *fz;
 
+  double *distances;
   int *collisions;         // Collisions to track
   double *mass;            // Masses of particles
   double timeStepSize;     // Global time step size
@@ -75,6 +76,7 @@ public:
                       vx(nullptr), vy(nullptr), vz(nullptr),
                       fx(nullptr), fy(nullptr), fz(nullptr),
                       mass(nullptr), collisions(nullptr),
+                      distances(nullptr),
                       timeStepSize(0), timeStepSizeHalf(0),
                       maxV(0), minDx(0), videoFile(),
                       snapshotCounter(0), timeStepCounter(0){};
@@ -106,6 +108,8 @@ public:
       delete[] mass;
     if (collisions != nullptr)
       delete[] collisions;
+    if (distances != nullptr)
+      delete[] distances;
   }
 
   inline void zero_forces()
@@ -142,6 +146,7 @@ public:
     fy = new double[NumberOfBodies];
     fz = new double[NumberOfBodies];
 
+    distances = new double[NumberOfBodies];
     mass = new double[NumberOfBodies];
     collisions = new int[NumberOfBodies];
     zero_forces();
@@ -307,7 +312,6 @@ public:
     for (int j = i + 1; j < NumberOfBodies; j++)
     {
       // Compute distance and track max
-      min_dx = minDx;
       double dx = xx[j] - xx[i];
       double dy = xy[j] - xy[i];
       double dz = xz[j] - xz[i];
@@ -315,10 +319,7 @@ public:
       double distance2 = magnitude_squared(dx, dy, dz);
       double distance = std::sqrt(distance2);
       double denom = 1 / (distance2 * distance);
-      if (distance < min_dx)
-      {
-        min_dx = distance;
-      }
+      distances[j] = distance;
 
       // Compute new acceleration.
       // Normally we would divide by m to get acceleration
@@ -342,8 +343,14 @@ public:
     fy[i] = f_new_y;
     fz[i] = f_new_z;
 
-    // Store min Dx
-    minDx = min_dx < minDx ? min_dx : minDx;
+    // Find min Dx
+    double min_dx = std::numeric_limits<double>::max();
+    for (int j = i + 1; j < NumberOfBodies; j++)
+    {
+      min_dx = min_dx < distances[j] ? min_dx : distances[j];
+    }
+
+    minDx = minDx < min_dx ? minDx : min_dx;
   }
 
   inline void force_update()
@@ -380,15 +387,6 @@ public:
       xz[i] += vz[i] * timeStepSize;
     }
 
-    // Step 6
-    // Collisions
-    // Largest possible collision radius is 2C * the maximum mass of any current particle
-    // So if the smallest distance between any two particles is leq this, we should check
-    if (minDx <= C * max_mass * 2)
-    {
-      collision_detection();
-    }
-
     // Step 3
     // Zero out old forces
     zero_forces();
@@ -411,7 +409,19 @@ public:
       }
     }
 
-    maxV = max_v;
+    // Step 6
+    // Collisions
+    // Largest possible collision radius is 2C * the maximum mass of any current particle
+    // So if the smallest distance between any two particles is leq this, we should check
+    if (minDx <= C * max_mass * 2)
+    {
+      // Iterate upper triangle of all particles
+      for (int i = 0; i < NumberOfBodies; i++)
+      {
+        collision_detection(i);
+      }
+    }
+
     t += timeStepSize;
   }
 
