@@ -426,7 +426,7 @@ public:
     }
 
     t += timeStepSize;
-    if (t >= tPlot)
+    if (t >= tPlot && !DISABLE_OUT)
     {
       maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     }
