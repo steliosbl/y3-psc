@@ -9,7 +9,6 @@
 #include <string>
 #include <cstring>
 #include <omp.h>
-#define DISABLE_OUT true
 
 // You can compile this file with
 // g++ -O3 assignment-code.cpp -o assignment-code
@@ -341,6 +340,9 @@ public:
     double dx, dy, dz;
     double min_dx = std::numeric_limits<double>::max();
     int offset;
+
+    // Parallelise using the two-phase strategy from:
+    // https://www.cs.usask.ca/~spiteri/CMPT851/notes/nBody.pdf
 #pragma omp parallel shared(min_dx) private(offset, f_new_x, f_new_y, f_new_z, f_x, f_y, f_z, dx, dy, dz) default(none)
     {
 
@@ -481,7 +483,7 @@ public:
     }
 
     t += timeStepSize;
-    if (t >= tPlot && !DISABLE_OUT)
+    if (t >= tPlot)
     {
       maxV = std::sqrt(*std::max_element(velocities, velocities + NumberOfBodies));
     }
@@ -655,26 +657,16 @@ int main(int argc, char **argv)
   // Code that initialises and runs the simulation.
   NBodySimulation nbs;
   nbs.setUp(argc, argv);
-  if (!DISABLE_OUT)
-  {
-    nbs.openParaviewVideoFile();
-    nbs.takeSnapshot();
-  }
+  nbs.openParaviewVideoFile();
+  nbs.takeSnapshot();
 
   while (!nbs.hasReachedEnd())
   {
     nbs.updateBody();
-    if (!DISABLE_OUT)
-    {
-      nbs.takeSnapshot();
-    }
+    nbs.takeSnapshot();
   }
 
   nbs.printSummary();
-  if (!DISABLE_OUT)
-  {
-    nbs.closeParaviewVideoFile();
-  }
-
+  nbs.closeParaviewVideoFile();
   return 0;
 }

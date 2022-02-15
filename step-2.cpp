@@ -658,13 +658,11 @@ int main(int argc, char **argv)
 
   while (!nbs.hasReachedEnd())
   {
-    nbs.updateBody();
-    nbs.takeSnapshot();
+      nbs.updateBody();
+      nbs.takeSnapshot();
   }
 
   nbs.printSummary();
   nbs.closeParaviewVideoFile();
-
-  return 0;
   return 0;
 }
